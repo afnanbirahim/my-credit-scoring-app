@@ -10,7 +10,7 @@ feature_names = joblib.load("feature_names.pkl")
 
 # App title
 st.title("Microcredit Loan Eligibility Prediction")
-st.markdown("Enter applicant details below to check loan eligibility.")
+st.markdown("Enter borrower details to check loan eligibility.")
 
 # User Inputs
 loan_amount = st.number_input("Loan Amount (৳)", min_value=1000, max_value=500000, step=5000, value=20000)
@@ -18,20 +18,23 @@ income = st.number_input("Family Monthly Income (৳)", min_value=1000, max_valu
 savings = st.number_input("Total Family Savings (৳)", min_value=0, max_value=500000, step=1000, value=3000)
 loan_duration = st.number_input("Loan Duration (Days)", min_value=7, max_value=720, step=7, value=120)
 
-# New: Repayment ratio slider
-repayment_ratio = st.slider("Estimated Repayment Ratio (e.g. 0.0–1.0)", min_value=0.0, max_value=1.0, step=0.05, value=0.5)
+# Repayment ratio slider
+repayment_ratio = st.slider("Estimated Repayment Ratio (0.0–1.0)", min_value=0.0, max_value=1.0, step=0.05, value=0.75)
 
-# Optional: fill all other one-hot encoded or extra fields with 0.0
+# Approval threshold slider
+threshold = st.slider("Approval Threshold", min_value=0.5, max_value=0.9, step=0.01, value=0.65)
+
+# Fill all other unused features with 0.0
 extra_features = {name: 0.0 for name in feature_names if name not in [
     'Loan Amount', 'Family Income in Taka', 'Total Savings',
     'Debt_to_Income', 'Repayment_Ratio', 'Savings_to_Income', 'Loan_Duration_Days'
 ]}
 
-# Auto-compute engineered features
+# Engineered features
 debt_to_income = loan_amount / (income + 1)
 savings_to_income = savings / (income + 1)
 
-# Build full input vector
+# Build input vector
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
@@ -50,17 +53,19 @@ input_scaled = scaler.transform(input_df)
 # Predict
 if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
-    threshold = 0.75
-    prediction = int(probability >= threshold)
 
-    if prediction == 1:
+    # Use custom threshold
+    if probability >= threshold:
         st.success(f"✅ Eligible for loan (Confidence: {probability:.2f})")
+        prediction = 1
     else:
         st.error(f"❌ High risk – not eligible (Confidence: {1 - probability:.2f})")
+        prediction = 0
 
+    # Debug info
     st.markdown("---")
     st.subheader("Prediction Details")
-    st.write(f"Approval Threshold: {threshold}")
     st.write("Model Confidence Score:", round(probability, 4))
-    st.write("Input Features (scaled):")
+    st.write("Threshold Used:", threshold)
+    st.write("Scaled Input Features:")
     st.dataframe(pd.DataFrame(input_scaled, columns=feature_names))
