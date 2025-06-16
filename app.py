@@ -70,3 +70,9 @@ if st.button("Check Eligibility"):
     st.write("Model Confidence Score:", round(probability, 4))
     st.write("Input Features (scaled):")
     st.dataframe(pd.DataFrame(input_scaled, columns=feature_names))
+
+import joblib
+
+joblib.dump(final_model, "final_model.pkl")
+joblib.dump(scaler, "scaler.pkl")
+joblib.dump(X.columns.tolist(), "feature_names.pkl")
