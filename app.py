@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import joblib
 
-# Load model, scaler, and feature list
+# Load model, scaler, and expected feature list
 model = joblib.load("final_model.pkl")
 scaler = joblib.load("scaler.pkl")
 feature_names = joblib.load("feature_names.pkl")
@@ -24,17 +24,11 @@ repayment_ratio = st.slider("Estimated Repayment Ratio (0.0–1.0)", min_value=0
 # Threshold for decision
 threshold = st.slider("Approval Threshold", min_value=0.5, max_value=0.9, step=0.01, value=0.65)
 
-# Fill in all other features as 0.0
-extra_features = {name: 0.0 for name in feature_names if name not in [
-    'Loan Amount', 'Family Income in Taka', 'Total Savings',
-    'Debt_to_Income', 'Repayment_Ratio', 'Savings_to_Income', 'Loan_Duration_Days'
-]}
-
-# Feature Engineering
+# Engineered Features
 debt_to_income = loan_amount / (income + 1)
 savings_to_income = savings / (income + 1)
 
-# Construct the input dictionary
+# Build initial input dictionary
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
@@ -44,28 +38,29 @@ user_input = {
     "Savings_to_Income": savings_to_income,
     "Loan_Duration_Days": loan_duration
 }
-user_input.update(extra_features)
 
-# Prepare input for model
-input_df = pd.DataFrame([user_input], columns=feature_names)
+# Fill in all missing features from training with 0.0 (e.g., one-hot columns)
+for feature in feature_names:
+    if feature not in user_input:
+        user_input[feature] = 0.0
+
+# Ensure order matches training
+input_df = pd.DataFrame([user_input])[feature_names]
 input_scaled = scaler.transform(input_df)
 
-# Prediction Logic
+# Predict
 if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
 
     if probability >= threshold:
         st.success(f"✅ Eligible for loan (Model Confidence: {probability:.2f})")
-        prediction = 1
     else:
         st.error(f"❌ High risk – not eligible (Model Confidence: {probability:.2f})")
-        prediction = 0
 
-    # Optional: Flag borderline cases
     if abs(probability - threshold) < 0.05:
-        st.info("ℹ️ Note: This decision is close to the threshold. Consider manual review.")
+        st.info("ℹ️ This decision is close to the threshold. Consider manual review.")
 
-    # Debug / Explanation Section
+    # Show prediction details
     st.markdown("---")
     st.subheader("Prediction Details")
     st.write("Model Output Probability:", round(probability, 4))
