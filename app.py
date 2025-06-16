@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -20,7 +18,10 @@ income = st.number_input("Family Monthly Income (৳)", min_value=1000, max_valu
 savings = st.number_input("Total Family Savings (৳)", min_value=0, max_value=500000, step=1000, value=3000)
 loan_duration = st.number_input("Loan Duration (Days)", min_value=7, max_value=720, step=7, value=120)
 
-# Fill in any additional one-hot or extra features with 0
+# New: Repayment ratio slider
+repayment_ratio = st.slider("Estimated Repayment Ratio (e.g. 0.0–1.0)", min_value=0.0, max_value=1.0, step=0.05, value=0.5)
+
+# Optional: fill all other one-hot encoded or extra fields with 0.0
 extra_features = {name: 0.0 for name in feature_names if name not in [
     'Loan Amount', 'Family Income in Taka', 'Total Savings',
     'Debt_to_Income', 'Repayment_Ratio', 'Savings_to_Income', 'Loan_Duration_Days'
@@ -28,10 +29,9 @@ extra_features = {name: 0.0 for name in feature_names if name not in [
 
 # Auto-compute engineered features
 debt_to_income = loan_amount / (income + 1)
-repayment_ratio = 0.85  # conservative default
 savings_to_income = savings / (income + 1)
 
-# Build input vector
+# Build full input vector
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
@@ -43,14 +43,15 @@ user_input = {
 }
 user_input.update(extra_features)
 
-# Create input DataFrame and scale
+# Create DataFrame and scale
 input_df = pd.DataFrame([user_input], columns=feature_names)
 input_scaled = scaler.transform(input_df)
 
 # Predict
 if st.button("Check Eligibility"):
-    prediction = model.predict(input_scaled)[0]
     probability = model.predict_proba(input_scaled)[0][1]
+    threshold = 0.75
+    prediction = int(probability >= threshold)
 
     if prediction == 1:
         st.success(f"✅ Eligible for loan (Confidence: {probability:.2f})")
@@ -59,6 +60,7 @@ if st.button("Check Eligibility"):
 
     st.markdown("---")
     st.subheader("Prediction Details")
+    st.write(f"Approval Threshold: {threshold}")
     st.write("Model Confidence Score:", round(probability, 4))
     st.write("Input Features (scaled):")
     st.dataframe(pd.DataFrame(input_scaled, columns=feature_names))
