@@ -33,26 +33,10 @@ num_children = st.number_input("Number of Children", min_value=0, max_value=10, 
 num_children_school = st.number_input("Number of Children Going to School", min_value=0, max_value=10, value=1)
 years_in_area = st.number_input("Years Living in the Area", min_value=0, max_value=50, value=5)
 
-# Section: Product Selection
-product_name = st.selectbox("Loan Product Type", [
-    "Jagoron",
-    "Pragrosor",
-    "Agrosor",
-    "Agrosor (Graduate)",
-    "Uttoron",
-    "Shopno",
-    "Migration Welfare",
-    "Remittance",
-    "Suchona",
-    "Buniad",
-    "Biborton",
-    "Others"
-])
-
 # Engineered feature
 debt_to_income = loan_amount / (income + 1)
 
-# Build input dictionary
+# Build input dictionary (only using features expected by the model)
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
@@ -68,22 +52,10 @@ user_input = {
     "Whether the phone number is verified": 1 if phone_verified == "Yes" else 0,
     "Number of children": num_children,
     "Number of children going to school": num_children_school,
-    "How many years the member is staying at the area": years_in_area,
-    "Product Name of Loan Details_Jagoron": 1 if product_name == "Jagoron" else 0,
-    "Product Name of Loan Details_Pragrosor": 1 if product_name == "Pragrosor" else 0,
-    "Product Name of Loan Details_Agrosor": 1 if product_name == "Agrosor" else 0,
-    "Product Name of Loan Details_Agrosor (Graduate)": 1 if product_name == "Agrosor (Graduate)" else 0,
-    "Product Name of Loan Details_Uttoron": 1 if product_name == "Uttoron" else 0,
-    "Product Name of Loan Details_Shopno": 1 if product_name == "Shopno" else 0,
-    "Product Name of Loan Details_Migration Welfare": 1 if product_name == "Migration Welfare" else 0,
-    "Product Name of Loan Details_Remittance": 1 if product_name == "Remittance" else 0,
-    "Product Name of Loan Details_Suchona": 1 if product_name == "Suchona" else 0,
-    "Product Name of Loan Details_Buniad": 1 if product_name == "Buniad" else 0,
-    "Product Name of Loan Details_Biborton": 1 if product_name == "Biborton" else 0,
-    "Product Name of Loan Details_Others": 1 if product_name == "Others" else 0
+    "How many years the member is staying at the area": years_in_area
 }
 
-# Fill missing expected features with 0.0
+# Fill any missing expected features with 0.0
 for col in feature_names:
     if col not in user_input:
         user_input[col] = 0.0
