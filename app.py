@@ -33,8 +33,21 @@ num_children = st.number_input("Number of Children", min_value=0, max_value=10, 
 num_children_school = st.number_input("Number of Children Going to School", min_value=0, max_value=10, value=1)
 years_in_area = st.number_input("Years Living in the Area", min_value=0, max_value=50, value=5)
 
-# Section: Product Selection (if used during training)
-product_name = st.selectbox("Product Name of Loan", ["JAGORON", "AGROSHOR (Graduate)", "BUNIAD", "Others"])
+# Section: Product Selection
+product_name = st.selectbox("Loan Product Type", [
+    "Jagoron",
+    "Pragrosor",
+    "Agrosor",
+    "Agrosor (Graduate)",
+    "Uttoron",
+    "Shopno",
+    "Migration Welfare",
+    "Remittance",
+    "Suchona",
+    "Buniad",
+    "Biborton",
+    "Others"
+])
 
 # Engineered feature
 debt_to_income = loan_amount / (income + 1)
@@ -56,21 +69,30 @@ user_input = {
     "Number of children": num_children,
     "Number of children going to school": num_children_school,
     "How many years the member is staying at the area": years_in_area,
-    "Product Name of Loan Details_JAGORON": 1 if product_name == "JAGORON" else 0,
-    "Product Name of Loan Details_AGROSHOR (Graduate)": 1 if product_name == "AGROSHOR (Graduate)" else 0,
-    "Product Name of Loan Details_BUNIAD": 1 if product_name == "BUNIAD" else 0
+    "Product Name of Loan Details_Jagoron": 1 if product_name == "Jagoron" else 0,
+    "Product Name of Loan Details_Pragrosor": 1 if product_name == "Pragrosor" else 0,
+    "Product Name of Loan Details_Agrosor": 1 if product_name == "Agrosor" else 0,
+    "Product Name of Loan Details_Agrosor (Graduate)": 1 if product_name == "Agrosor (Graduate)" else 0,
+    "Product Name of Loan Details_Uttoron": 1 if product_name == "Uttoron" else 0,
+    "Product Name of Loan Details_Shopno": 1 if product_name == "Shopno" else 0,
+    "Product Name of Loan Details_Migration Welfare": 1 if product_name == "Migration Welfare" else 0,
+    "Product Name of Loan Details_Remittance": 1 if product_name == "Remittance" else 0,
+    "Product Name of Loan Details_Suchona": 1 if product_name == "Suchona" else 0,
+    "Product Name of Loan Details_Buniad": 1 if product_name == "Buniad" else 0,
+    "Product Name of Loan Details_Biborton": 1 if product_name == "Biborton" else 0,
+    "Product Name of Loan Details_Others": 1 if product_name == "Others" else 0
 }
 
-# Fill missing features with 0.0 (e.g., for dummy vars)
+# Fill missing expected features with 0.0
 for col in feature_names:
     if col not in user_input:
         user_input[col] = 0.0
 
-# Create input DataFrame
+# Create aligned input DataFrame
 input_df = pd.DataFrame([user_input])[feature_names]
 input_scaled = scaler.transform(input_df)
 
-# Predict
+# Prediction
 if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
     prediction = int(probability >= threshold)
@@ -83,7 +105,7 @@ if st.button("Check Eligibility"):
     if abs(probability - threshold) < 0.05:
         st.info("ℹ️ This prediction is close to the decision boundary. Manual review advised.")
 
-    # Debug
+    # Debug info
     st.markdown("---")
     st.subheader("Model Input (Raw)")
     st.dataframe(pd.DataFrame([user_input]))
