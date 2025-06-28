@@ -66,14 +66,42 @@ if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
     prediction = int(probability >= threshold)
 
+    # Display prediction
     if prediction == 1:
         st.success(f"✅ Eligible for loan (Confidence: {probability:.2f})")
     else:
         st.error(f"❌ High risk – not eligible (Confidence: {probability:.2f})")
 
+    # Close decision boundary warning
     if abs(probability - threshold) < 0.05:
         st.info("ℹ️ This prediction is close to the decision boundary. Manual review advised.")
 
+    # Manual rule-based review layer
+    manual_review = False
+    reasons = []
+
+    if debt_to_income > 2.0 and income > 30000:
+        manual_review = True
+        reasons.append("High debt-to-income despite high income")
+
+    if installment_amount > 0.5 * loan_amount:
+        manual_review = True
+        reasons.append("Installment amount unusually high compared to loan")
+
+    if repayment_ratio < 0.5 and income > 40000:
+        manual_review = True
+        reasons.append("Low repayment ratio despite strong income")
+
+    if guaranteed == "No" and fo_visited == "Yes" and income > 30000:
+        manual_review = True
+        reasons.append("No guarantor but FO visited and income is strong")
+
+    if manual_review:
+        st.warning("⚠️ Manual review recommended due to:")
+        for reason in reasons:
+            st.write(f"- {reason}")
+
+    # Debug info
     st.markdown("---")
     st.subheader("Model Input (Raw)")
     st.dataframe(pd.DataFrame([user_input]))
