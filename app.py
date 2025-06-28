@@ -10,61 +10,58 @@ feature_names = joblib.load("feature_names.pkl")
 
 # App title and description
 st.title("Microcredit Loan Eligibility Predictor")
-st.markdown("This tool predicts loan eligibility based on borrower details using a stacked ML model.")
+st.markdown("This tool predicts loan eligibility based on borrower details using a trained machine learning model.")
 
-# Section: Basic Borrower Inputs
+# User input fields
 loan_amount = st.number_input("Loan Amount (৳)", min_value=1000, max_value=500000, step=5000, value=20000)
 income = st.number_input("Family Monthly Income (৳)", min_value=1000, max_value=500000, step=1000, value=10000)
 loan_duration = st.number_input("Loan Duration (Days)", min_value=7, max_value=720, step=7, value=120)
 interest_rate = st.number_input("Interest Rate (%)", min_value=1.0, max_value=100.0, step=0.5, value=24.0)
 installments = st.number_input("Number of Installments", min_value=1, max_value=60, step=1, value=12)
 installment_amount = st.number_input("Installment Amount (৳)", min_value=100, max_value=50000, step=100, value=3800)
+num_children = st.number_input("Number of Children", min_value=0, max_value=10, step=1, value=2)
+num_schooling = st.number_input("Children Going to School", min_value=0, max_value=10, step=1, value=1)
+years_in_area = st.number_input("Years Living in the Area", min_value=0, max_value=50, step=1, value=5)
+
+# Binary inputs
+own_house = st.selectbox("Do you own a house?", ["Yes", "No"])
+guaranteed = st.selectbox("Guarantor Provided?", ["Yes", "No"])
+fo_visited = st.selectbox("FO/CO Visited the House?", ["Yes", "No"])
+phone_verified = st.selectbox("Phone Number Verified?", ["Yes", "No"])
+
+# Repayment Ratio slider (user estimate)
 repayment_ratio = st.slider("Estimated Repayment Ratio", min_value=0.0, max_value=1.0, step=0.05, value=0.75)
-threshold = st.slider("Approval Threshold", min_value=0.3, max_value=0.9, step=0.01, value=0.60)
+threshold = st.slider("Approval Threshold", min_value=0.3, max_value=0.9, step=0.01, value=0.6)
 
-# Section: Additional Categorical Inputs
-own_house = st.radio("Do you Own a House?", ["Yes", "No"])
-guaranteed = st.radio("Guarantor Provided?", ["Yes", "No"])
-visited = st.radio("FO/CO Visited the House?", ["Yes", "No"])
-phone_verified = st.radio("Phone Number Verified?", ["Yes", "No"])
-
-# Section: Demographic Inputs
-num_children = st.number_input("Number of Children", min_value=0, max_value=10, value=2)
-num_children_school = st.number_input("Number of Children Going to School", min_value=0, max_value=10, value=1)
-years_in_area = st.number_input("Years Living in the Area", min_value=0, max_value=50, value=5)
-
-# Engineered feature
+# Feature engineering
 debt_to_income = loan_amount / (income + 1)
 
-# Build input dictionary (only using features expected by the model)
+# Build the input vector
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
-    "Debt_to_Income": debt_to_income,
-    "Repayment_Ratio": repayment_ratio,
-    "Loan_Duration_Days": loan_duration,
+    "Own House": 1 if own_house == "Yes" else 0,
+    "Guarantor Details": 1 if guaranteed == "Yes" else 0,
+    "Whether the FO or CO visited the house": 1 if fo_visited == "Yes" else 0,
+    "Number of children": num_children,
+    "Number of children going to school": num_schooling,
+    "How many years the member is staying at the area": years_in_area,
+    "Whether the phone number is verified": 1 if phone_verified == "Yes" else 0,
     "Interest Rate": interest_rate,
     "Number of Installment": installments,
     "Installment Amount": installment_amount,
-    "Own House": 1 if own_house == "Yes" else 0,
-    "Guarantor Details": 1 if guaranteed == "Yes" else 0,
-    "Whether the FO or CO visited the house": 1 if visited == "Yes" else 0,
-    "Whether the phone number is verified": 1 if phone_verified == "Yes" else 0,
-    "Number of children": num_children,
-    "Number of children going to school": num_children_school,
-    "How many years the member is staying at the area": years_in_area
+    "Debt_to_Income": debt_to_income
 }
 
-# Fill any missing expected features with 0.0
+# Align input to model feature order
 for col in feature_names:
     if col not in user_input:
-        user_input[col] = 0.0
+        user_input[col] = 0.0  # fill missing optional features with 0
 
-# Create aligned input DataFrame
 input_df = pd.DataFrame([user_input])[feature_names]
 input_scaled = scaler.transform(input_df)
 
-# Prediction
+# Predict
 if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
     prediction = int(probability >= threshold)
@@ -77,7 +74,6 @@ if st.button("Check Eligibility"):
     if abs(probability - threshold) < 0.05:
         st.info("ℹ️ This prediction is close to the decision boundary. Manual review advised.")
 
-    # Debug info
     st.markdown("---")
     st.subheader("Model Input (Raw)")
     st.dataframe(pd.DataFrame([user_input]))
