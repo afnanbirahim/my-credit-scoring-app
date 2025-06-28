@@ -12,7 +12,7 @@ feature_names = joblib.load("feature_names.pkl")
 st.title("Microcredit Loan Eligibility Predictor")
 st.markdown("This tool predicts loan eligibility based on borrower details using a stacked ML model.")
 
-# User input fields
+# Section: Basic Borrower Inputs
 loan_amount = st.number_input("Loan Amount (৳)", min_value=1000, max_value=500000, step=5000, value=20000)
 income = st.number_input("Family Monthly Income (৳)", min_value=1000, max_value=500000, step=1000, value=10000)
 loan_duration = st.number_input("Loan Duration (Days)", min_value=7, max_value=720, step=7, value=120)
@@ -22,10 +22,24 @@ installment_amount = st.number_input("Installment Amount (৳)", min_value=100, 
 repayment_ratio = st.slider("Estimated Repayment Ratio", min_value=0.0, max_value=1.0, step=0.05, value=0.75)
 threshold = st.slider("Approval Threshold", min_value=0.3, max_value=0.9, step=0.01, value=0.60)
 
+# Section: Additional Categorical Inputs
+own_house = st.radio("Do you Own a House?", ["Yes", "No"])
+guaranteed = st.radio("Guarantor Provided?", ["Yes", "No"])
+visited = st.radio("FO/CO Visited the House?", ["Yes", "No"])
+phone_verified = st.radio("Phone Number Verified?", ["Yes", "No"])
+
+# Section: Demographic Inputs
+num_children = st.number_input("Number of Children", min_value=0, max_value=10, value=2)
+num_children_school = st.number_input("Number of Children Going to School", min_value=0, max_value=10, value=1)
+years_in_area = st.number_input("Years Living in the Area", min_value=0, max_value=50, value=5)
+
+# Section: Product Selection (if used during training)
+product_name = st.selectbox("Product Name of Loan", ["JAGORON", "AGROSHOR (Graduate)", "BUNIAD", "Others"])
+
 # Engineered feature
 debt_to_income = loan_amount / (income + 1)
 
-# Input dictionary using only expected features
+# Build input dictionary
 user_input = {
     "Loan Amount": loan_amount,
     "Family Income in Taka": income,
@@ -34,19 +48,29 @@ user_input = {
     "Loan_Duration_Days": loan_duration,
     "Interest Rate": interest_rate,
     "Number of Installment": installments,
-    "Installment Amount": installment_amount
+    "Installment Amount": installment_amount,
+    "Own House": 1 if own_house == "Yes" else 0,
+    "Guarantor Details": 1 if guaranteed == "Yes" else 0,
+    "Whether the FO or CO visited the house": 1 if visited == "Yes" else 0,
+    "Whether the phone number is verified": 1 if phone_verified == "Yes" else 0,
+    "Number of children": num_children,
+    "Number of children going to school": num_children_school,
+    "How many years the member is staying at the area": years_in_area,
+    "Product Name of Loan Details_JAGORON": 1 if product_name == "JAGORON" else 0,
+    "Product Name of Loan Details_AGROSHOR (Graduate)": 1 if product_name == "AGROSHOR (Graduate)" else 0,
+    "Product Name of Loan Details_BUNIAD": 1 if product_name == "BUNIAD" else 0
 }
 
-# Fill missing expected features with 0.0
+# Fill missing features with 0.0 (e.g., for dummy vars)
 for col in feature_names:
     if col not in user_input:
         user_input[col] = 0.0
 
-# Create aligned input DataFrame
+# Create input DataFrame
 input_df = pd.DataFrame([user_input])[feature_names]
 input_scaled = scaler.transform(input_df)
 
-# Prediction
+# Predict
 if st.button("Check Eligibility"):
     probability = model.predict_proba(input_scaled)[0][1]
     prediction = int(probability >= threshold)
@@ -59,7 +83,7 @@ if st.button("Check Eligibility"):
     if abs(probability - threshold) < 0.05:
         st.info("ℹ️ This prediction is close to the decision boundary. Manual review advised.")
 
-    # Debug info
+    # Debug
     st.markdown("---")
     st.subheader("Model Input (Raw)")
     st.dataframe(pd.DataFrame([user_input]))
