@@ -8,12 +8,12 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# Page config FIRST
+# Page config
 # =========================
 st.set_page_config(page_title="Micro-Credit Default Scoring", page_icon="💳", layout="wide")
 
 # =========================
-# App constants (ROOT paths)
+# Constants
 # =========================
 APP_TITLE = "💳 Micro-Credit Default Scoring"
 APP_SUB   = "Hybrid LR + XGBoost • Guarded Thresholds • Top-K Policy"
@@ -21,10 +21,10 @@ APP_SUB   = "Hybrid LR + XGBoost • Guarded Thresholds • Top-K Policy"
 LR_PATH   = "model_lr_calibrated.joblib"
 XGB_PATH  = "model_xgb_calibrated.joblib"
 META_PATH = "metadata.json"
-ZIP_PATH  = "models_bundle.zip"   # optional, single-zip fallback at root
+ZIP_PATH  = "models_bundle.zip"
 
 # =========================
-# Sidebar diagnostics (no widgets in cached funcs)
+# Diagnostics sidebar
 # =========================
 with st.sidebar:
     try:
@@ -41,10 +41,10 @@ with st.sidebar:
     st.write("Root files:", glob.glob("*"))
 
 # =========================
-# Path helpers (no cache, no widgets)
+# Load helpers
 # =========================
 def _ensure_from_zip():
-    """If models missing and ZIP exists at root, unzip once."""
+    """If missing and ZIP exists, unzip models."""
     need = [LR_PATH, XGB_PATH, META_PATH]
     if all(os.path.exists(p) for p in need):
         return
@@ -57,7 +57,7 @@ def _ensure_from_zip():
             st.exception(e)
 
 def resolve_artifact_paths():
-    """Try root files; if missing, offer uploaders (outside cache)."""
+    """Find or upload model artifacts."""
     _ensure_from_zip()
     have_all = all(os.path.exists(p) for p in [LR_PATH, XGB_PATH, META_PATH])
     if have_all:
@@ -86,7 +86,7 @@ def resolve_artifact_paths():
         st.stop()
 
 # =========================
-# Cached loader (no widgets here)
+# Cached model loader
 # =========================
 @st.cache_resource
 def load_models(lr_path: str, xgb_path: str, meta_path: str):
@@ -113,7 +113,7 @@ def load_models(lr_path: str, xgb_path: str, meta_path: str):
 
     return lr_m, xgb_m, meta
 
-# ============= Resolve + Load =============
+# ============= Load models =============
 lr_path, xgb_path, meta_path = resolve_artifact_paths()
 lr_m, xgb_m, meta = load_models(lr_path, xgb_path, meta_path)
 
@@ -126,7 +126,7 @@ REJECT_PCT   = float(meta["topk_policy"]["reject_pct"])
 REVIEW_PCT   = float(meta["topk_policy"]["review_next_pct"])
 REVIEW_FLOOR = max(0.6 * THRESHOLD, 0.05)
 
-# --- Force-fix known numeric fields that may have been misclassified as categorical
+# Fix known numeric fields
 NUMERIC_FORCE = {
     "How many years the member is staying at the area",
     "Number of children",
@@ -139,7 +139,6 @@ NUMERIC_FORCE = {
     "Interest Rate",
     "Number of Installment",
 }
-# Ensure these are not treated as categorical in the UI
 CAT_COLS = [c for c in CAT_COLS if c not in NUMERIC_FORCE]
 for c in NUMERIC_FORCE:
     if c not in NUM_COLS and c in FEATURES:
@@ -149,7 +148,6 @@ for c in NUMERIC_FORCE:
 # Scoring helpers
 # =========================
 def p_default_hybrid(df_in: pd.DataFrame) -> np.ndarray:
-    """Hybrid probability = (1-W)*LR + W*XGB; ensure all FEATURES exist."""
     X = df_in.copy()
     for c in FEATURES:
         if c not in X.columns:
@@ -167,7 +165,7 @@ def decide_threshold(p: np.ndarray, t: float = THRESHOLD, review_floor: float = 
 
 def apply_topk_policy(p: np.ndarray, reject_pct: float, review_pct: float) -> np.ndarray:
     n = len(p)
-    order = np.argsort(-p)  # descending risk
+    order = np.argsort(-p)
     reject_k = max(1, int(np.floor(reject_pct * n)))
     review_k = max(0, int(np.floor(review_pct * n)))
     d = np.full(n, "approve", dtype=object)
@@ -193,43 +191,48 @@ def topk_capture_stats(y_true: np.ndarray, p: np.ndarray, reject_pct: float, rev
     }
 
 # =========================
-# UI
+# UI START
 # =========================
 st.title(APP_TITLE)
 st.caption(APP_SUB)
 
-# --- Model & Policy explanation for users
+# ---- Explanation Section ----
 with st.expander("ℹ️ Model & Decision Policy Explained", expanded=False):
     st.markdown("""
 ### 🧮 Model Overview
-This micro-credit scoring app predicts the probability that a borrower may **default** on repayment.
-It uses a **hybrid model** that blends Logistic Regression (interpretable) and XGBoost (non-linear power).
+This scoring system predicts the probability that a borrower may **default** on repayment.
+It uses a **hybrid model** blending Logistic Regression (interpretable) and XGBoost (non-linear power).
 
 ### ⚖️ Threshold-Based Decision
 - **Approve** → if `p_default < 0.45`  
 - **Review** → if `0.45 ≤ p_default < 0.75`  
 - **Reject** → if `p_default ≥ 0.75`
 
-The *threshold* and *review floor* values come from model metadata (configurable in this app).
+These cut-offs (thresholds) come from trained model metadata and can be fine-tuned.
 
 ### 🔝 Top-K (Percentile-Based) Policy
-- Rank borrowers by predicted risk (`p_default`)
-- Reject the top **5%**
-- Review the next **10%**
-- Approve the rest
-
-This keeps rejection/review share consistent across batches when risk distribution shifts.
+- Rank all borrowers by predicted risk.
+- Reject the top **K₁ %** (highest-risk).
+- Review the next **K₂ %**.
+- Approve the rest.
 
 ### ✅ Meaning of Decisions
 | Decision | Interpretation | Action |
 |-----------|----------------|--------|
-| **Approve** | Borrower shows strong repayment potential | Proceed to disbursement |
-| **Review** | Some risk — verification or additional documents required | Field officer follow-up |
-| **Reject** | High probability of default | Do not approve loan at this stage |
+| **Approve** | Strong repayment potential | Proceed to disbursement |
+| **Review** | Medium risk — needs manual check | Field officer verification |
+| **Reject** | High risk of default | Do not approve loan |
 
-**Note:** All numeric cut-offs (thresholds, Top-K percentages) can be tuned in the sidebar for policy simulation.
+### 🔧 Top-K Slider Settings
+| Control | Meaning | Effect |
+|----------|----------|--------|
+| **Reject top % (K₁)** | % of most risky borrowers auto-rejected | Higher → stricter approval |
+| **Review next % (K₂)** | % of next risky borrowers for manual check | Higher → more human review |
+
+**Example:** If K₁ = 5 % and K₂ = 10 %, out of 1000 borrowers → 50 reject, 100 review, 850 approve.
 """)
 
+# ---- Sidebar ----
 with st.sidebar:
     st.markdown("### ⚙️ Inference Settings")
     st.write("These mirror your trained metadata.")
@@ -237,14 +240,31 @@ with st.sidebar:
     st.metric("Review floor (≥ 0.6·t)", f"{REVIEW_FLOOR:.3f}")
     st.metric("Blend weight (XGB)", f"{W_XGB:.2f}")
 
+    st.markdown("""
+    <small>
+    **Inference Settings Explained**
+
+    - **Hybrid threshold (reject ≥ t):**  
+      Borrowers with risk ≥ t are automatically rejected.
+
+    - **Review floor (≥ 0.6·t):**  
+      Borrowers with risk between this value and t are flagged for manual review.
+
+    - **Blend weight (XGB):**  
+      Weight of the XGBoost model in the hybrid prediction.  
+      Example: 0.25 → 25 % XGB + 75 % Logistic Regression.
+    </small>
+    """, unsafe_allow_html=True)
+
     st.markdown("---")
     st.markdown("### 🧪 Top-K Policy")
-    rej = st.slider("Reject top % (K₁)", min_value=1, max_value=20, value=int(REJECT_PCT*100), step=1)
-    rev = st.slider("Review next % (K₂)", min_value=0, max_value=30, value=int(REVIEW_PCT*100), step=1)
+    rej = st.slider("Reject top % (K₁)", 1, 20, int(REJECT_PCT*100), 1)
+    rev = st.slider("Review next % (K₂)", 0, 30, int(REVIEW_PCT*100), 1)
     rej_pct = rej / 100.0
     rev_pct = rev / 100.0
 
-tabs = st.tabs(["🔹 Single Borrower", "📂 Batch Scoring", "📈 Reports (optional)"])
+# ---- Tabs ----
+tabs = st.tabs(["🔹 Single Borrower", "📂 Batch Scoring", "📈 Reports"])
 
 # ---------- Tab 1: Single Borrower ----------
 with tabs[0]:
@@ -253,39 +273,22 @@ with tabs[0]:
         st.subheader("Borrower Information")
         borrower = {}
 
-        # Respect metadata first, then auto-infer the rest
         used_cats = [c for c in FEATURES if c in CAT_COLS]
         used_nums = [c for c in FEATURES if c in NUM_COLS]
         remaining = [c for c in FEATURES if c not in used_cats + used_nums]
-
-        # Heuristic: if a remaining feature name looks like a yes/no question, treat as categorical; else numeric
         for c in remaining:
             if c in NUMERIC_FORCE:
                 used_nums.append(c)
-            elif any(x in c.lower() for x in ["yes", "no", "whether", "own", "aware", "details", "verified", "remarks"]):
+            elif any(x in c.lower() for x in ["yes","no","whether","own","aware","details","verified","remarks"]):
                 used_cats.append(c)
             else:
                 used_nums.append(c)
 
-        # Render inputs
         for c in used_cats:
             borrower[c] = st.selectbox(c, ["Yes", "No"], index=0)
 
-        # Provide reasonable defaults for numeric fields
-        default_map = {
-            "How many years the member is staying at the area": 0.0,
-            "Number of children": 0.0,
-            "Number of children going to school": 0.0,
-            "Family Income in Taka": 0.0,
-            "Total Asset Value of Family in Taka": 0.0,
-            "Total Savings": 0.0,
-            "Loan Amount": 0.0,
-            "Installment Amount": 0.0,
-            "Interest Rate": 0.0,
-            "Number of Installment": 0.0,
-        }
         for c in used_nums:
-            borrower[c] = st.number_input(c, value=float(default_map.get(c, 0.0)), step=1.0, format="%.4f")
+            borrower[c] = st.number_input(c, value=0.0, step=1.0, format="%.4f")
 
         if st.button("🔍 Predict", use_container_width=True):
             X_one = pd.DataFrame([borrower])
@@ -311,13 +314,10 @@ with tabs[0]:
 
 # ---------- Tab 2: Batch Scoring ----------
 with tabs[1]:
-    st.subheader("Upload borrowers (Excel or CSV)")
+    st.subheader("Upload borrower dataset (Excel or CSV)")
     up = st.file_uploader("Choose a file", type=["xlsx", "csv"])
-    if up is not None:
-        if up.name.lower().endswith(".csv"):
-            df_in = pd.read_csv(up)
-        else:
-            df_in = pd.read_excel(up)
+    if up:
+        df_in = pd.read_csv(up) if up.name.lower().endswith(".csv") else pd.read_excel(up)
         st.write("Preview:")
         st.dataframe(df_in.head())
 
@@ -327,28 +327,21 @@ with tabs[1]:
             df_out["p_default"] = p
             df_out["decision_threshold"] = decide_threshold(p)
             df_out["decision_topk"] = apply_topk_policy(p, rej_pct, rev_pct)
-
             st.success("Scoring completed.")
             st.dataframe(df_out.head())
-
-            csv = df_out.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download scored_borrowers.csv", data=csv,
-                               file_name="scored_borrowers.csv", mime="text/csv")
+            st.download_button("⬇️ Download scored_borrowers.csv",
+                               df_out.to_csv(index=False).encode("utf-8"),
+                               "scored_borrowers.csv", "text/csv")
 
 # ---------- Tab 3: Reports ----------
 with tabs[2]:
-    st.subheader("Optional: Evaluate capture on a labeled batch")
-    st.caption("If your uploaded data includes the target column **Advance or Due Amount**:\n"
-               "- DEFAULT = 1 if value > 0 else 0")
+    st.subheader("Evaluate capture on labeled data (optional)")
+    st.caption("If your data includes **Advance or Due Amount**, defaults = 1 if > 0 else 0.")
     up_lab = st.file_uploader("Upload labeled file (Excel/CSV)", type=["xlsx","csv"], key="labeled")
     target_col = "Advance or Due Amount"
 
-    if up_lab is not None:
-        if up_lab.name.lower().endswith(".csv"):
-            df_lab = pd.read_csv(up_lab)
-        else:
-            df_lab = pd.read_excel(up_lab)
-
+    if up_lab:
+        df_lab = pd.read_csv(up_lab) if up_lab.name.lower().endswith(".csv") else pd.read_excel(up_lab)
         if target_col not in df_lab.columns:
             st.error(f"Target column '{target_col}' not found.")
         else:
@@ -356,19 +349,15 @@ with tabs[2]:
             p = p_default_hybrid(df_lab)
             stats = topk_capture_stats(y, p, rej_pct, rev_pct)
 
-            st.write("Preview:")
             st.dataframe(df_lab.head())
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total rows", stats["n"])
+            c2.metric("Total defaults", stats["total_defaults"])
+            c3.metric("Captured (Top-K)", f"{stats['defaults_captured']} ({stats['capture_rate']*100:.1f}%)")
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total rows", stats["n"])
-            col2.metric("Total defaults", stats["total_defaults"])
-            col3.metric("Captured (Top-K)", f"{stats['defaults_captured']} ({stats['capture_rate']*100:.1f}%)")
-
-            df_rep = df_lab.copy()
-            df_rep["p_default"] = p
-            df_rep["decision_threshold"] = decide_threshold(p)
-            df_rep["decision_topk"] = apply_topk_policy(p, rej_pct, rev_pct)
-
-            csv_rep = df_rep.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download scored_with_labels.csv", data=csv_rep,
-                               file_name="scored_with_labels.csv", mime="text/csv")
+            df_lab["p_default"] = p
+            df_lab["decision_threshold"] = decide_threshold(p)
+            df_lab["decision_topk"] = apply_topk_policy(p, rej_pct, rev_pct)
+            st.download_button("⬇️ Download scored_with_labels.csv",
+                               df_lab.to_csv(index=False).encode("utf-8"),
+                               "scored_with_labels.csv", "text/csv")
