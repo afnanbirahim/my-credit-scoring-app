@@ -24,7 +24,7 @@ META_PATH = "metadata.json"
 ZIP_PATH  = "models_bundle.zip"   # optional, single-zip fallback at root
 
 # =========================
-# (Optional) diagnostics
+# Sidebar diagnostics (no widgets in cached funcs)
 # =========================
 with st.sidebar:
     try:
@@ -44,7 +44,7 @@ with st.sidebar:
 # Path helpers (no cache, no widgets)
 # =========================
 def _ensure_from_zip():
-    """If models missing and ZIP exists, unzip once."""
+    """If models missing and ZIP exists at root, unzip once."""
     need = [LR_PATH, XGB_PATH, META_PATH]
     if all(os.path.exists(p) for p in need):
         return
@@ -126,6 +126,25 @@ REJECT_PCT   = float(meta["topk_policy"]["reject_pct"])
 REVIEW_PCT   = float(meta["topk_policy"]["review_next_pct"])
 REVIEW_FLOOR = max(0.6 * THRESHOLD, 0.05)
 
+# --- Force-fix known numeric fields that may have been misclassified as categorical
+NUMERIC_FORCE = {
+    "How many years the member is staying at the area",
+    "Number of children",
+    "Number of children going to school",
+    "Family Income in Taka",
+    "Total Asset Value of Family in Taka",
+    "Total Savings",
+    "Loan Amount",
+    "Installment Amount",
+    "Interest Rate",
+    "Number of Installment",
+}
+# Ensure these are not treated as categorical in the UI
+CAT_COLS = [c for c in CAT_COLS if c not in NUMERIC_FORCE]
+for c in NUMERIC_FORCE:
+    if c not in NUM_COLS and c in FEATURES:
+        NUM_COLS.append(c)
+
 # =========================
 # Scoring helpers
 # =========================
@@ -179,6 +198,38 @@ def topk_capture_stats(y_true: np.ndarray, p: np.ndarray, reject_pct: float, rev
 st.title(APP_TITLE)
 st.caption(APP_SUB)
 
+# --- Model & Policy explanation for users
+with st.expander("ℹ️ Model & Decision Policy Explained", expanded=False):
+    st.markdown("""
+### 🧮 Model Overview
+This micro-credit scoring app predicts the probability that a borrower may **default** on repayment.
+It uses a **hybrid model** that blends Logistic Regression (interpretable) and XGBoost (non-linear power).
+
+### ⚖️ Threshold-Based Decision
+- **Approve** → if `p_default < 0.45`  
+- **Review** → if `0.45 ≤ p_default < 0.75`  
+- **Reject** → if `p_default ≥ 0.75`
+
+The *threshold* and *review floor* values come from model metadata (configurable in this app).
+
+### 🔝 Top-K (Percentile-Based) Policy
+- Rank borrowers by predicted risk (`p_default`)
+- Reject the top **5%**
+- Review the next **10%**
+- Approve the rest
+
+This keeps rejection/review share consistent across batches when risk distribution shifts.
+
+### ✅ Meaning of Decisions
+| Decision | Interpretation | Action |
+|-----------|----------------|--------|
+| **Approve** | Borrower shows strong repayment potential | Proceed to disbursement |
+| **Review** | Some risk — verification or additional documents required | Field officer follow-up |
+| **Reject** | High probability of default | Do not approve loan at this stage |
+
+**Note:** All numeric cut-offs (thresholds, Top-K percentages) can be tuned in the sidebar for policy simulation.
+""")
+
 with st.sidebar:
     st.markdown("### ⚙️ Inference Settings")
     st.write("These mirror your trained metadata.")
@@ -202,31 +253,39 @@ with tabs[0]:
         st.subheader("Borrower Information")
         borrower = {}
 
+        # Respect metadata first, then auto-infer the rest
         used_cats = [c for c in FEATURES if c in CAT_COLS]
         used_nums = [c for c in FEATURES if c in NUM_COLS]
-
-        # Dynamically infer others
         remaining = [c for c in FEATURES if c not in used_cats + used_nums]
+
+        # Heuristic: if a remaining feature name looks like a yes/no question, treat as categorical; else numeric
         for c in remaining:
-            if any(x in c.lower() for x in ["yes", "no", "whether", "own", "aware", "details", "verified", "remarks"]):
+            if c in NUMERIC_FORCE:
+                used_nums.append(c)
+            elif any(x in c.lower() for x in ["yes", "no", "whether", "own", "aware", "details", "verified", "remarks"]):
                 used_cats.append(c)
             else:
                 used_nums.append(c)
 
-        # ✅ Force numeric correction for misclassified columns
-        force_numeric = ["How many years the member is staying at the area"]
-        for col in force_numeric:
-            if col in used_cats:
-                used_cats.remove(col)
-            if col not in used_nums:
-                used_nums.append(col)
-
-        # Render UI inputs
+        # Render inputs
         for c in used_cats:
             borrower[c] = st.selectbox(c, ["Yes", "No"], index=0)
 
+        # Provide reasonable defaults for numeric fields
+        default_map = {
+            "How many years the member is staying at the area": 0.0,
+            "Number of children": 0.0,
+            "Number of children going to school": 0.0,
+            "Family Income in Taka": 0.0,
+            "Total Asset Value of Family in Taka": 0.0,
+            "Total Savings": 0.0,
+            "Loan Amount": 0.0,
+            "Installment Amount": 0.0,
+            "Interest Rate": 0.0,
+            "Number of Installment": 0.0,
+        }
         for c in used_nums:
-            borrower[c] = st.number_input(c, value=0.0, step=1.0, format="%.4f")
+            borrower[c] = st.number_input(c, value=float(default_map.get(c, 0.0)), step=1.0, format="%.4f")
 
         if st.button("🔍 Predict", use_container_width=True):
             X_one = pd.DataFrame([borrower])
@@ -237,8 +296,8 @@ with tabs[0]:
             with colR:
                 st.subheader("Result")
                 st.metric("Predicted Default Probability", f"{p:.3f}")
-                st.metric("Threshold Policy", decision_t)
-                st.metric("Top-K Policy", decision_k)
+                st.metric("Threshold Policy", decision_t.capitalize())
+                st.metric("Top-K Policy", decision_k.capitalize())
 
             with st.expander("Details"):
                 st.json({
@@ -303,8 +362,7 @@ with tabs[2]:
             col1, col2, col3 = st.columns(3)
             col1.metric("Total rows", stats["n"])
             col2.metric("Total defaults", stats["total_defaults"])
-            col3.metric("Captured (Top-K)", f"{stats['defaults_captured']} "
-                       f"({stats['capture_rate']*100:.1f}%)")
+            col3.metric("Captured (Top-K)", f"{stats['defaults_captured']} ({stats['capture_rate']*100:.1f}%)")
 
             df_rep = df_lab.copy()
             df_rep["p_default"] = p
