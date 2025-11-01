@@ -8,6 +8,11 @@ import pandas as pd
 import streamlit as st
 
 # =========================
+# Page config FIRST
+# =========================
+st.set_page_config(page_title="Micro-Credit Default Scoring", page_icon="💳", layout="wide")
+
+# =========================
 # App constants (ROOT paths)
 # =========================
 APP_TITLE = "💳 Micro-Credit Default Scoring"
@@ -21,84 +26,86 @@ ZIP_PATH  = "models_bundle.zip"   # optional, single-zip fallback at root
 # =========================
 # (Optional) diagnostics
 # =========================
-try:
-    import sys, sklearn, xgboost, numpy
-    st.sidebar.write("Env versions:", {
-        "python": sys.version.split()[0],
-        "sklearn": sklearn.__version__,
-        "xgboost": xgboost.__version__,
-        "numpy": numpy.__version__,
-        "joblib": joblib.__version__,
-    })
-except Exception:
-    pass
-st.sidebar.write("Root files:", glob.glob("*"))
+with st.sidebar:
+    try:
+        import sys, sklearn, xgboost, numpy
+        st.write("Env versions:", {
+            "python": sys.version.split()[0],
+            "sklearn": sklearn.__version__,
+            "xgboost": xgboost.__version__,
+            "numpy": numpy.__version__,
+            "joblib": joblib.__version__,
+        })
+    except Exception:
+        pass
+    st.write("Root files:", glob.glob("*"))
 
 # =========================
-# Resilient model loader (ROOT)
+# Path helpers (no cache, no widgets)
 # =========================
-@st.cache_resource
-def load_artifacts():
-    """
-    Load models & metadata from the REPO ROOT with 3 fallbacks:
-      1) Use files in root if present
-      2) Else unzip models_bundle.zip (if present) into root
-      3) Else ask user to upload 3 files once and save to root
-    """
+def _ensure_from_zip():
+    """If models missing and ZIP exists, unzip once."""
     need = [LR_PATH, XGB_PATH, META_PATH]
-
-    # 1) If missing, try unzipping zip from root
-    if not all(os.path.exists(p) for p in need) and os.path.exists(ZIP_PATH):
+    if all(os.path.exists(p) for p in need):
+        return
+    if os.path.exists(ZIP_PATH):
         try:
             with zipfile.ZipFile(ZIP_PATH, "r") as zf:
                 zf.extractall(".")
         except Exception as e:
             st.error("Failed to unzip models_bundle.zip")
             st.exception(e)
-            st.stop()
 
-    # 2) If still missing, ask uploads once, save to root
-    if not all(os.path.exists(p) for p in need):
-        st.warning("Models not found in repo root. Upload the three artifacts below (one-time).")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            lr_u  = st.file_uploader("model_lr_calibrated.joblib", type=["joblib"], key="u_lr")
-        with c2:
-            xgb_u = st.file_uploader("model_xgb_calibrated.joblib", type=["joblib"], key="u_xgb")
-        with c3:
-            meta_u= st.file_uploader("metadata.json", type=["json"], key="u_meta")
+def resolve_artifact_paths():
+    """Try root files; if missing, offer uploaders (outside cache)."""
+    _ensure_from_zip()
+    have_all = all(os.path.exists(p) for p in [LR_PATH, XGB_PATH, META_PATH])
+    if have_all:
+        return LR_PATH, XGB_PATH, META_PATH
 
-        if lr_u and xgb_u and meta_u:
-            try:
-                open(LR_PATH,  "wb").write(lr_u.read())
-                open(XGB_PATH, "wb").write(xgb_u.read())
-                open(META_PATH,"wb").write(meta_u.read())
-                st.success("Artifacts saved to root. Click **Rerun** (top-right).")
-            except Exception as e:
-                st.error("Failed to save uploaded artifacts to root.")
-                st.exception(e)
-            st.stop()
-        else:
-            st.stop()
+    st.warning("Models not found in repo root. Upload the three artifacts below (one-time).")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        lr_u  = st.file_uploader("model_lr_calibrated.joblib", type=["joblib"], key="u_lr")
+    with c2:
+        xgb_u = st.file_uploader("model_xgb_calibrated.joblib", type=["joblib"], key="u_xgb")
+    with c3:
+        meta_u= st.file_uploader("metadata.json", type=["json"], key="u_meta")
 
-    # 3) Load with error reporting
+    if lr_u and xgb_u and meta_u:
+        try:
+            open(LR_PATH,  "wb").write(lr_u.read())
+            open(XGB_PATH, "wb").write(xgb_u.read())
+            open(META_PATH,"wb").write(meta_u.read())
+            st.success("Artifacts saved to root. Click **Rerun** (top-right).")
+        except Exception as e:
+            st.error("Failed to save uploaded artifacts to root.")
+            st.exception(e)
+        st.stop()
+    else:
+        st.stop()
+
+# =========================
+# Cached loader (no widgets here)
+# =========================
+@st.cache_resource
+def load_models(lr_path: str, xgb_path: str, meta_path: str):
     try:
-        lr_m  = joblib.load(LR_PATH)
-        xgb_m = joblib.load(XGB_PATH)
+        lr_m  = joblib.load(lr_path)
+        xgb_m = joblib.load(xgb_path)
     except Exception as e:
         st.error("Failed to load/unpickle models. Likely version mismatch or corrupted/LFS file.")
         st.exception(e)
         st.stop()
 
     try:
-        with open(META_PATH, "r") as f:
+        with open(meta_path, "r") as f:
             meta = json.load(f)
     except Exception as e:
         st.error("Failed to read metadata.json from root.")
         st.exception(e)
         st.stop()
 
-    # Validate minimal keys to avoid KeyError later
     for k in ["features", "thresholds", "topk_policy", "blend_weight_xgb"]:
         if k not in meta:
             st.error(f"metadata.json is missing the key: '{k}'.")
@@ -106,8 +113,9 @@ def load_artifacts():
 
     return lr_m, xgb_m, meta
 
-# ============= Load artifacts =============
-lr_m, xgb_m, meta = load_artifacts()
+# ============= Resolve + Load =============
+lr_path, xgb_path, meta_path = resolve_artifact_paths()
+lr_m, xgb_m, meta = load_models(lr_path, xgb_path, meta_path)
 
 FEATURES     = meta["features"]
 CAT_COLS     = meta.get("cat_cols", [])
@@ -119,13 +127,10 @@ REVIEW_PCT   = float(meta["topk_policy"]["review_next_pct"])
 REVIEW_FLOOR = max(0.6 * THRESHOLD, 0.05)
 
 # =========================
-# Helpers
+# Scoring helpers
 # =========================
 def p_default_hybrid(df_in: pd.DataFrame) -> np.ndarray:
-    """
-    Hybrid probability = (1-W)*LR + W*XGB
-    Ensures all FEATURES exist; fills missing with NaN.
-    """
+    """Hybrid probability = (1-W)*LR + W*XGB; ensure all FEATURES exist."""
     X = df_in.copy()
     for c in FEATURES:
         if c not in X.columns:
@@ -146,7 +151,6 @@ def apply_topk_policy(p: np.ndarray, reject_pct: float, review_pct: float) -> np
     order = np.argsort(-p)  # descending risk
     reject_k = max(1, int(np.floor(reject_pct * n)))
     review_k = max(0, int(np.floor(review_pct * n)))
-
     d = np.full(n, "approve", dtype=object)
     d[order[:reject_k]] = "reject"
     d[order[reject_k:reject_k+review_k]] = "review"
@@ -172,7 +176,6 @@ def topk_capture_stats(y_true: np.ndarray, p: np.ndarray, reject_pct: float, rev
 # =========================
 # UI
 # =========================
-st.set_page_config(page_title="Micro-Credit Default Scoring", page_icon="💳", layout="wide")
 st.title(APP_TITLE)
 st.caption(APP_SUB)
 
