@@ -205,6 +205,7 @@ with tabs[0]:
         used_cats = [c for c in FEATURES if c in CAT_COLS]
         used_nums = [c for c in FEATURES if c in NUM_COLS]
 
+        # Dynamically infer others
         remaining = [c for c in FEATURES if c not in used_cats + used_nums]
         for c in remaining:
             if any(x in c.lower() for x in ["yes", "no", "whether", "own", "aware", "details", "verified", "remarks"]):
@@ -212,6 +213,15 @@ with tabs[0]:
             else:
                 used_nums.append(c)
 
+        # ✅ Force numeric correction for misclassified columns
+        force_numeric = ["How many years the member is staying at the area"]
+        for col in force_numeric:
+            if col in used_cats:
+                used_cats.remove(col)
+            if col not in used_nums:
+                used_nums.append(col)
+
+        # Render UI inputs
         for c in used_cats:
             borrower[c] = st.selectbox(c, ["Yes", "No"], index=0)
 
