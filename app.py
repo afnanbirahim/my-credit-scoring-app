@@ -1,5 +1,4 @@
 import os
-import io
 import json
 import glob
 import zipfile
@@ -9,20 +8,19 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# App constants
+# App constants (ROOT paths)
 # =========================
 APP_TITLE = "💳 Micro-Credit Default Scoring"
 APP_SUB   = "Hybrid LR + XGBoost • Guarded Thresholds • Top-K Policy"
 
-LR_PATH   = "artifacts/model_lr_calibrated.joblib"
-XGB_PATH  = "artifacts/model_xgb_calibrated.joblib"
-META_PATH = "artifacts/metadata.json"
-ZIP_PATH  = "artifacts_bundle.zip"
+LR_PATH   = "model_lr_calibrated.joblib"
+XGB_PATH  = "model_xgb_calibrated.joblib"
+META_PATH = "metadata.json"
+ZIP_PATH  = "models_bundle.zip"   # optional, single-zip fallback at root
 
 # =========================
-# Diagnostics (temporary)
+# (Optional) diagnostics
 # =========================
-# Comment these out later if you want a cleaner sidebar
 try:
     import sys, sklearn, xgboost, numpy
     st.sidebar.write("Env versions:", {
@@ -35,35 +33,33 @@ try:
 except Exception:
     pass
 st.sidebar.write("Root files:", glob.glob("*"))
-st.sidebar.write("Artifacts files:", glob.glob("artifacts/*"))
 
 # =========================
-# Resilient model loader
+# Resilient model loader (ROOT)
 # =========================
 @st.cache_resource
 def load_artifacts():
     """
-    Load models & metadata with 3 fallbacks:
-      1) use artifacts/ if present
-      2) else unzip artifacts_bundle.zip from repo root
-      3) else ask user to upload the 3 files once and save them
+    Load models & metadata from the REPO ROOT with 3 fallbacks:
+      1) Use files in root if present
+      2) Else unzip models_bundle.zip (if present) into root
+      3) Else ask user to upload 3 files once and save to root
     """
     need = [LR_PATH, XGB_PATH, META_PATH]
 
-    # 1) If missing, try unzipping from artifacts_bundle.zip
+    # 1) If missing, try unzipping zip from root
     if not all(os.path.exists(p) for p in need) and os.path.exists(ZIP_PATH):
-        os.makedirs("artifacts", exist_ok=True)
         try:
             with zipfile.ZipFile(ZIP_PATH, "r") as zf:
                 zf.extractall(".")
         except Exception as e:
-            st.error("Failed to unzip artifacts_bundle.zip")
+            st.error("Failed to unzip models_bundle.zip")
             st.exception(e)
             st.stop()
 
-    # 2) If still missing, let the user upload once
+    # 2) If still missing, ask uploads once, save to root
     if not all(os.path.exists(p) for p in need):
-        st.warning("Models not found. Upload the three artifacts below to run the app (one-time).")
+        st.warning("Models not found in repo root. Upload the three artifacts below (one-time).")
         c1, c2, c3 = st.columns(3)
         with c1:
             lr_u  = st.file_uploader("model_lr_calibrated.joblib", type=["joblib"], key="u_lr")
@@ -73,14 +69,13 @@ def load_artifacts():
             meta_u= st.file_uploader("metadata.json", type=["json"], key="u_meta")
 
         if lr_u and xgb_u and meta_u:
-            os.makedirs("artifacts", exist_ok=True)
             try:
                 open(LR_PATH,  "wb").write(lr_u.read())
                 open(XGB_PATH, "wb").write(xgb_u.read())
                 open(META_PATH,"wb").write(meta_u.read())
-                st.success("Artifacts saved. Click **Rerun** (top-right).")
+                st.success("Artifacts saved to root. Click **Rerun** (top-right).")
             except Exception as e:
-                st.error("Failed to save uploaded artifacts.")
+                st.error("Failed to save uploaded artifacts to root.")
                 st.exception(e)
             st.stop()
         else:
@@ -91,7 +86,7 @@ def load_artifacts():
         lr_m  = joblib.load(LR_PATH)
         xgb_m = joblib.load(XGB_PATH)
     except Exception as e:
-        st.error("Failed to load/unpickle models. This is usually a version mismatch or a corrupted/LFS file.")
+        st.error("Failed to load/unpickle models. Likely version mismatch or corrupted/LFS file.")
         st.exception(e)
         st.stop()
 
@@ -99,7 +94,7 @@ def load_artifacts():
         with open(META_PATH, "r") as f:
             meta = json.load(f)
     except Exception as e:
-        st.error("Failed to read metadata.json.")
+        st.error("Failed to read metadata.json from root.")
         st.exception(e)
         st.stop()
 
@@ -204,11 +199,9 @@ with tabs[0]:
         st.subheader("Borrower Information")
         borrower = {}
 
-        # Prefer metadata lists to render correct widgets
         used_cats = [c for c in FEATURES if c in CAT_COLS]
         used_nums = [c for c in FEATURES if c in NUM_COLS]
 
-        # If metadata didn't capture all types, fall back on heuristics
         remaining = [c for c in FEATURES if c not in used_cats + used_nums]
         for c in remaining:
             if any(x in c.lower() for x in ["yes", "no", "whether", "own", "aware", "details", "verified", "remarks"]):
@@ -216,11 +209,9 @@ with tabs[0]:
             else:
                 used_nums.append(c)
 
-        # Render categorical first
         for c in used_cats:
             borrower[c] = st.selectbox(c, ["Yes", "No"], index=0)
 
-        # Then numeric
         for c in used_nums:
             borrower[c] = st.number_input(c, value=0.0, step=1.0, format="%.4f")
 
@@ -302,7 +293,6 @@ with tabs[2]:
             col3.metric("Captured (Top-K)", f"{stats['defaults_captured']} "
                        f"({stats['capture_rate']*100:.1f}%)")
 
-            # Add scored + decisions for download
             df_rep = df_lab.copy()
             df_rep["p_default"] = p
             df_rep["decision_threshold"] = decide_threshold(p)
