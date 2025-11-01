@@ -1,41 +1,141 @@
+import os
+import io
 import json
+import glob
+import zipfile
 import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ---------- App constants ----------
+# =========================
+# App constants
+# =========================
 APP_TITLE = "💳 Micro-Credit Default Scoring"
 APP_SUB   = "Hybrid LR + XGBoost • Guarded Thresholds • Top-K Policy"
 
-# ---------- Load artifacts ----------
+LR_PATH   = "artifacts/model_lr_calibrated.joblib"
+XGB_PATH  = "artifacts/model_xgb_calibrated.joblib"
+META_PATH = "artifacts/metadata.json"
+ZIP_PATH  = "artifacts_bundle.zip"
+
+# =========================
+# Diagnostics (temporary)
+# =========================
+# Comment these out later if you want a cleaner sidebar
+try:
+    import sys, sklearn, xgboost, numpy
+    st.sidebar.write("Env versions:", {
+        "python": sys.version.split()[0],
+        "sklearn": sklearn.__version__,
+        "xgboost": xgboost.__version__,
+        "numpy": numpy.__version__,
+        "joblib": joblib.__version__,
+    })
+except Exception:
+    pass
+st.sidebar.write("Root files:", glob.glob("*"))
+st.sidebar.write("Artifacts files:", glob.glob("artifacts/*"))
+
+# =========================
+# Resilient model loader
+# =========================
 @st.cache_resource
 def load_artifacts():
-    lr_m  = joblib.load("artifacts/model_lr_calibrated.joblib")
-    xgb_m = joblib.load("artifacts/model_xgb_calibrated.joblib")
-    with open("artifacts/metadata.json","r") as f:
-        meta = json.load(f)
+    """
+    Load models & metadata with 3 fallbacks:
+      1) use artifacts/ if present
+      2) else unzip artifacts_bundle.zip from repo root
+      3) else ask user to upload the 3 files once and save them
+    """
+    need = [LR_PATH, XGB_PATH, META_PATH]
+
+    # 1) If missing, try unzipping from artifacts_bundle.zip
+    if not all(os.path.exists(p) for p in need) and os.path.exists(ZIP_PATH):
+        os.makedirs("artifacts", exist_ok=True)
+        try:
+            with zipfile.ZipFile(ZIP_PATH, "r") as zf:
+                zf.extractall(".")
+        except Exception as e:
+            st.error("Failed to unzip artifacts_bundle.zip")
+            st.exception(e)
+            st.stop()
+
+    # 2) If still missing, let the user upload once
+    if not all(os.path.exists(p) for p in need):
+        st.warning("Models not found. Upload the three artifacts below to run the app (one-time).")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            lr_u  = st.file_uploader("model_lr_calibrated.joblib", type=["joblib"], key="u_lr")
+        with c2:
+            xgb_u = st.file_uploader("model_xgb_calibrated.joblib", type=["joblib"], key="u_xgb")
+        with c3:
+            meta_u= st.file_uploader("metadata.json", type=["json"], key="u_meta")
+
+        if lr_u and xgb_u and meta_u:
+            os.makedirs("artifacts", exist_ok=True)
+            try:
+                open(LR_PATH,  "wb").write(lr_u.read())
+                open(XGB_PATH, "wb").write(xgb_u.read())
+                open(META_PATH,"wb").write(meta_u.read())
+                st.success("Artifacts saved. Click **Rerun** (top-right).")
+            except Exception as e:
+                st.error("Failed to save uploaded artifacts.")
+                st.exception(e)
+            st.stop()
+        else:
+            st.stop()
+
+    # 3) Load with error reporting
+    try:
+        lr_m  = joblib.load(LR_PATH)
+        xgb_m = joblib.load(XGB_PATH)
+    except Exception as e:
+        st.error("Failed to load/unpickle models. This is usually a version mismatch or a corrupted/LFS file.")
+        st.exception(e)
+        st.stop()
+
+    try:
+        with open(META_PATH, "r") as f:
+            meta = json.load(f)
+    except Exception as e:
+        st.error("Failed to read metadata.json.")
+        st.exception(e)
+        st.stop()
+
+    # Validate minimal keys to avoid KeyError later
+    for k in ["features", "thresholds", "topk_policy", "blend_weight_xgb"]:
+        if k not in meta:
+            st.error(f"metadata.json is missing the key: '{k}'.")
+            st.stop()
+
     return lr_m, xgb_m, meta
 
+# ============= Load artifacts =============
 lr_m, xgb_m, meta = load_artifacts()
 
-FEATURES   = meta["features"]
-CAT_COLS   = meta.get("cat_cols", [])
-NUM_COLS   = meta.get("num_cols", [])
-W_XGB      = meta["blend_weight_xgb"]
-THRESHOLD  = meta["thresholds"]["hybrid"]
-REJECT_PCT = meta["topk_policy"]["reject_pct"]
-REVIEW_PCT = meta["topk_policy"]["review_next_pct"]
+FEATURES     = meta["features"]
+CAT_COLS     = meta.get("cat_cols", [])
+NUM_COLS     = meta.get("num_cols", [])
+W_XGB        = float(meta["blend_weight_xgb"])
+THRESHOLD    = float(meta["thresholds"]["hybrid"])
+REJECT_PCT   = float(meta["topk_policy"]["reject_pct"])
+REVIEW_PCT   = float(meta["topk_policy"]["review_next_pct"])
 REVIEW_FLOOR = max(0.6 * THRESHOLD, 0.05)
 
-# ---------- Helpers ----------
+# =========================
+# Helpers
+# =========================
 def p_default_hybrid(df_in: pd.DataFrame) -> np.ndarray:
-    """Compute hybrid probability = (1-W)*LR + W*XGB"""
-    # Ensure all required features exist (add NaN if missing)
+    """
+    Hybrid probability = (1-W)*LR + W*XGB
+    Ensures all FEATURES exist; fills missing with NaN.
+    """
+    X = df_in.copy()
     for c in FEATURES:
-        if c not in df_in.columns:
-            df_in[c] = np.nan
-    X = df_in[FEATURES].copy()
+        if c not in X.columns:
+            X[c] = np.nan
+    X = X[FEATURES]
     p_lr  = lr_m.predict_proba(X)[:, 1]
     p_xgb = xgb_m.predict_proba(X)[:, 1]
     return (1 - W_XGB) * p_lr + W_XGB * p_xgb
@@ -74,7 +174,9 @@ def topk_capture_stats(y_true: np.ndarray, p: np.ndarray, reject_pct: float, rev
         "capture_rate": (captured / total_defaults) if total_defaults > 0 else 0.0
     }
 
-# ---------- UI ----------
+# =========================
+# UI
+# =========================
 st.set_page_config(page_title="Micro-Credit Default Scoring", page_icon="💳", layout="wide")
 st.title(APP_TITLE)
 st.caption(APP_SUB)
